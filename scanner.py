@@ -1,6 +1,7 @@
 
 import os
 import re
+import sys
 
 PLACEHOLDER_VALUES = {
     "changeme", "your_password_here", "password", "example",
@@ -14,6 +15,7 @@ patterns = [
     ("Hardcoded Password", r"(?i)(password|passwd|pwd|secret)\s*=\s*[\"'](.+)[\"']"),
 ]
 
+found_secrets = False
 for root, dirs, files in os.walk("."):
     if ".git" in dirs:
         dirs.remove(".git")
@@ -23,7 +25,7 @@ for root, dirs, files in os.walk("."):
         filepath = os.path.join(root, filename)
         with open(filepath, "r") as f:
             for number, line in enumerate(f, start=1):
-               for label, pattern in patterns:
+                for label, pattern in patterns:
                     match = re.search(pattern, line)
                     if match:
                         if label == "Hardcoded Password":
@@ -31,3 +33,9 @@ for root, dirs, files in os.walk("."):
                             if value in PLACEHOLDER_VALUES:
                                 continue
                         print(f"[!] Possible {label} in {filepath} (line {number}): {match.group()}")
+                        found_secrets = True
+if found_secrets:
+    print("\n[!] Secrets detected — push blocked.")
+    sys.exit(1)
+else:
+    sys.exit(0)
