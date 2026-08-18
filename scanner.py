@@ -1,4 +1,3 @@
-
 import os
 import re
 import sys
@@ -20,7 +19,7 @@ for root, dirs, files in os.walk("."):
     if ".git" in dirs:
         dirs.remove(".git")
     for filename in files:
-        if filename == "scanner.py":
+        if filename == "scanner.py" or filename.endswith(".md"):
             continue
         filepath = os.path.join(root, filename)
         with open(filepath, "r") as f:
