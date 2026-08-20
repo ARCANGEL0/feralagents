@@ -48,7 +48,15 @@ def main():
         if filepath.endswith("scanner.py") or filepath.endswith(".md"):
             continue
 
-        with open(filepath, "r") as f:
+        try:
+            with open(filepath, "rb") as f:
+                chunk = f.read(1024)
+            if b"\x00" in chunk:
+                continue
+        except Exception:
+            continue
+
+        with open(filepath, "r", errors="ignore") as f:
             for number, line in enumerate(f, start=1):
                 for label, pattern in patterns:
                     match = re.search(pattern, line)
