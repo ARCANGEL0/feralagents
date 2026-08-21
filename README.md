@@ -1,16 +1,19 @@
 # FeralAgents
 
-This project is a lightweight, beginner-friendly secret scanner that catches hardcoded credentials before they ever leave your machine.
+[![Secret Scanner CI](https://github.com/solarcaesar/feralagents/actions/workflows/ci.yml/badge.svg)](https://github.com/solarcaesar/feralagents/actions/workflows/ci.yml)
 
-FeralAgents walks through your project files, flags things like AWS keys, GitHub tokens, private key headers, and hardcoded passwords, and can be wired into a Git pre-push hook to **block the push entirely** if anything suspicious is found. That way the secrets never make it to a remote repo in the first place.
+A lightweight, beginner-friendly secret scanner that catches hardcoded credentials before they ever leave your machine.
+
+FeralAgents walks through your project files, flags things like AWS keys, GitHub tokens, private key headers, and hardcoded passwords, and can be wired into a Git pre-push hook to **block the push entirely** if anything suspicious is found — so secrets never make it to a remote repo in the first place.
 
 ## Why
 
-Leaked credentials are one of the most common (and most avoidable) causes of real-world breaches. Most of the time it's not malicious, it can as well be an `.env` value pasted into code, a test API key left in a config file, or a password hardcoded "just for now" and forgotten. FeralAgents is a small, understandable tool built to catch exactly that, before it becomes a `git push`.
+Leaked credentials are one of the most common (and most avoidable) causes of real-world breaches. Most of the time it's not malicious — it's a `.env` value pasted into code, a test API key left in a config file, or a password hardcoded "just for now" and forgotten. FeralAgents is a small, understandable tool built to catch exactly that, before it becomes a `git push`.
 
 ## Features
+
 - 🔍 Scans only git-tracked files (via `git ls-files`), not the entire directory — gitignored files (like local test data) are never touched
-- 🔑 Detects multiple secret types out of the box:
+- Detects multiple secret types out of the box:
   - AWS access keys
   - GitHub personal access tokens
   - Private key headers (`-----BEGIN PRIVATE KEY-----`)
@@ -18,8 +21,8 @@ Leaked credentials are one of the most common (and most avoidable) causes of rea
 - Two layers of false-positive filtering:
   - A placeholder list (`changeme`, `your_password_here`, `example`, etc.)
   - **Shannon entropy filtering** — matched strings are scored for randomness, so predictable/fake-looking values (low entropy) are ignored while genuinely random-looking secrets (high entropy) are still flagged
--  Skips markdown files, so documentation examples don't trigger false alarms
--  Exits with a non-zero status code when a secret is found, so it can gate other tools (like Git)
+- Skips markdown files, so documentation examples don't trigger false alarms
+- Exits with a non-zero status code when a secret is found, so it can gate other tools (like Git)
 - Includes a working pre-push Git hook that blocks pushes if secrets are detected
 
 ## Installation
@@ -27,7 +30,7 @@ Leaked credentials are one of the most common (and most avoidable) causes of rea
 FeralAgents has no dependencies beyond the Python standard library.
 
 ```bash
-git clone https://github.com/saharaexecutiveoutcomes/feralagents.git
+git clone https://github.com/solarcaesar/feralagents.git
 cd feralagents
 ```
 
