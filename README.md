@@ -88,3 +88,5 @@ Entropy scoring works best on longer strings (like tokens). For short, key-like 
 FeralAgents was built as a hands-on learning project made by a student of diplomacy and humanities while transitioning into cybersecurity. Though AI/LLM assisting was used only as a means to learn, the lines were written and tested step by step manually rather than generated wholesale, as a way to actually learn Python and secure coding practices in the process.
 
 The name of the project was in reference to the song Feral Agents by ROME. I deemed it fitting considering the actual purpose of the tool.
+
+MANY special thanks to my friend, the user arcxlǿ or ARCANGELO for reviewing the project, helping with correcting lines of code and overall, helping me finish this. He is an extremely skilled software engineer and ethical hacker.
