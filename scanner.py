@@ -5,6 +5,7 @@ import math
 from collections import Counter
 from modules.patterns import SECRET_PATTERNS
 from modules.secret_context import SECRET_CONTEXT_PATTERN
+from modules.secret_variable import SECRET_VARIABLE_PATTERN
 from modules.non_secret_context import NEUTRAL_CONTEXT_PATTERN
 from modules.whitelist import (
     load_whitelist,
@@ -190,29 +191,102 @@ def main():
                     if not has_secret_context and not has_neutral_context:
                         continue
 
-                    for match in string_pattern.finditer(line):
-                        value = next(
+                    secret_variable_matches = list(
+                        SECRET_VARIABLE_PATTERN.finditer(line)
+                    )
+                    
+                    if secret_variable_matches:
+                        candidates = [
+                            (match.group(2).strip(), True)
+                            for match in secret_variable_matches
+                        ]
+                    else:
+                        candidates = [
                             (
-                                group
-                                for group in match.groups()
-                                if group is not None
-                            ),
-                            "",
-                        ).strip()
-
+                                next(
+                                    (
+                                        group
+                                        for group in match.groups()
+                                        if group is not None
+                                    ),
+                                    "",
+                                ).strip(),
+                                False,
+                            )
+                            for match in string_pattern.finditer(line)
+                        ]
+                    
+                    for value, is_secret_variable in candidates:
+                    
                         if len(value) < MIN_LENGTH_FOR_ENTROPY_CHECK:
                             continue
-
+                    
                         if is_placeholder(value):
                             continue
-
+                    
                         if is_whitelisted(value, whitelist):
                             continue
-
+                    
                         entropy = calculate_entropy(value)
-
-                        if entropy < ENTROPY_THRESHOLD:
+                    
+                        # Explicit secret assignments do not require high entropy.
+                        if not is_secret_variable and entropy < ENTROPY_THRESHOLD:
                             continue
+                    
+                        show_whitelist_prompt(
+                            filepath,
+                            number,
+                            value,
+                            entropy,
+                        )
+                    
+                        while True:
+                            try:
+                                answer = input("> ").strip().lower()
+                            except (EOFError, KeyboardInterrupt):
+                                print()
+                                print("[!] No approval received.")
+                                print("[!] Push blocked.")
+                                return 1
+                    
+                            if answer in ("y", "yes"):
+                                whitelist_value(
+                                    value,
+                                    whitelist,
+                                )
+                    
+                                print(
+                                    "[OK] Secret whitelisted. "
+                                    "Continuing scan."
+                                )
+                                break
+                    
+                            if answer in ("n", "no"):
+                                print()
+                                print("[!] Secret rejected.")
+                    
+                                detected_locations.append(
+                                    (filepath, number)
+                                )
+                    
+                                print(
+                                    "\n[!] Push blocked - secrets "
+                                    "were found on:"
+                                )
+                    
+                                for detected_filepath, detected_line in (
+                                    detected_locations
+                                ):
+                                    print(
+                                        f"- {detected_filepath}:"
+                                        f"{detected_line}"
+                                    )
+                    
+                                return 1
+                    
+                            print(
+                                "[!] Please answer 'y' or 'n'."
+                            )
 
                         # -----------------------------------
                         # | Last resource, find by entropy  |
