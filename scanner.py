@@ -6,8 +6,12 @@ import math
 from collections import Counter
 from modules.patterns import SECRET_PATTERNS
 from modules.secret_context import SECRET_CONTEXT_PATTERN
-from modules.secret_variable import SECRET_VARIABLE_PATTERN
 from modules.non_secret_context import NEUTRAL_CONTEXT_PATTERN
+from modules.whitelist import (
+    load_whitelist,
+    is_whitelisted,
+    whitelist_value,
+)
 
 PLACEHOLDER_VALUES = {
     "changeme", "change_me",
@@ -25,19 +29,19 @@ PLACEHOLDER_VALUES = {
 }
 
 ENTROPY_THRESHOLD = 4.0
-MIN_LENGTH_FOR_ENTROPY_CHECK = 16
+MIN_LENGTH_FOR_ENTROPY_CHECK = 8
 
 def calculate_entropy(s):
         # Entropy is useful for spotting random-looking strings,
     # but by itself it doesn't mean "secret". UUIDs and hashes
     # can have high entropy too. And it can be risky to single handlely treat every hash/UUID as secret and blocking push
     # a better treatment would treat them as suspicious or for a second revision but not treating as leaked secret
-    if not value:
+    if not s:
         return 0.0
 
-    value = value.strip()
+    s = s.strip()
 
-    if len(value) < 2:
+    if len(s) < 2:
         return 0.0
 
     counts = Counter(s)
@@ -76,6 +80,22 @@ def is_binary(filepath): #refactor of that binary check previously added.
     except OSError:
         return True
 
+
+def whitelist(filepath, line_number, value, entropy):
+    print()
+    print(
+        f"[possible secret found] "
+        f"{filepath}:{line_number} > {value}"
+    )
+    print(
+        f"[!] Entropy: {entropy:.2f}"
+    )
+    print(
+        "[!] User Approval Required. "
+        "Whitelist this secret? (y/n)"
+    )
+
+
 def get_tracked_files(): #refactor #2 
     result = subprocess.run( ["git", "ls-files"], capture_output=True, text=True )
     if result.returncode != 0:
@@ -98,12 +118,20 @@ def main():
     string_pattern = re.compile(
         r'''(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`)'''
     )
+    # Load once and keep the set updated while scanning.
+    whitelist = load_whitelist()
+    detected_locations = []
     found_secrets = False
     scan_errors = False
+
     for filepath in tracked_files:
-        # Maintain the skip for markdown files or the scanner itself
-        if filepath.endswith("scanner.py") or filepath.endswith(".md"):
+    
+        if filepath.endswith("scanner.py"):
             continue
+
+        if filepath.endswith(".md"):
+            continue
+
         try:
             if is_binary(filepath):
                 continue
@@ -127,12 +155,18 @@ def main():
                 for number, line in enumerate(f, start=1):
 
                     line_has_known_secret = False
+
+                    # -----------------------------------
+                    # | Provider pattern identification |
+                    # -----------------------------------
                     # Known provider formats don't need entropy to confirm
                     # them. If the format matches, report it immediately.
                     for label, pattern in SECRET_PATTERNS:
                         match = pattern.search(line)
+
                         if not match:
                             continue
+
                         print(
                             f"[!] Possible {label} in "
                             f"{filepath} (line {number}): "
@@ -141,30 +175,13 @@ def main():
 
                         found_secrets = True
                         line_has_known_secret = True
-                    # Catch generic assignments such as:
-                    # password = "..."
-                    # API_KEY = "..."
-                    # client_secret = "..."
-                    for match in SECRET_VARIABLE_PATTERN.finditer(line):
-                        name = match.group(1)
-                        value = match.group(2).strip()
 
-                        if is_placeholder(value):
-                            continue
-                        # Avoid reporting the same line twice when a
-                        # provider-specific pattern already matched.
-                        if line_has_known_secret:
-                            continue
-
-                        print(
-                            f"[!] Possible hardcoded {name} in "
-                            f"{filepath} (line {number}): "
-                            f"{value}"
+                        detected_locations.append(
+                            (filepath, number)
                         )
 
-                        found_secrets = True
                     # Entropy is only the fallback if the hardcoded patterns are not detected, but as informed high entropy never necessarily means a secret,
-                    # but its important to raise a suspicion
+                    # but its important to raise a suspicion tho
                     if line_has_known_secret:
                         continue
 
@@ -187,11 +204,17 @@ def main():
                         if is_placeholder(value):
                             continue
 
+                        if is_whitelisted(value, whitelist):
+                            continue
+
                         entropy = calculate_entropy(value)
 
                         if entropy < ENTROPY_THRESHOLD:
                             continue
 
+                        # -----------------------------------
+                        # | Last resource, find by entropy  |
+                        # -----------------------------------
                         # IDs and hashes can also have high entropy.
                         # However, they can be considered a ''secret'' or not, certain codes will have hardcoded
                         # high entropy numbers like UUID or user ids etc etc.. but i suppose it is best
@@ -206,14 +229,68 @@ def main():
                             else ""
                         )
 
-                        print(
-                            f"[!] Possible high-entropy secret in "
-                            f"{filepath} (line {number}): "
-                            f"{value} "
-                            f"(entropy={entropy:.2f}{suffix})"
+                        whitelist(
+                            filepath,
+                            number,
+                            value,
+                            entropy,
                         )
 
-                        found_secrets = True
+                        while True:
+                            try:
+                                answer = input("> ").strip().lower()
+                            except (EOFError, KeyboardInterrupt):
+                                print()
+                                print(
+                                    "[!] No approval received."
+                                )
+                                print(
+                                    "[!] Push blocked."
+                                )
+                                return 1
+
+                            if answer in ("y", "yes"):
+                                whitelist_value(
+                                    value,
+                                    whitelist,
+                                )
+
+                                print(
+                                    "[OK] Secret whitelisted. "
+                                    "Continuing scan."
+                                )
+                                break
+
+                            if answer in ("n", "no"):
+                                print()
+                                print(
+                                    "[!] Secret rejected."
+                                )
+
+                                detected_locations.append(
+                                    (filepath, number)
+                                )
+
+                                print(
+                                    "\n[!] Push blocked - secrets "
+                                    "were found on:"
+                                )
+
+                                for detected_filepath, detected_line in (
+                                    detected_locations
+                                ):
+                                    print(
+                                        f"- {detected_filepath}:"
+                                        f"{detected_line}"
+                                    )
+
+                                return 1
+
+                            print(
+                                "[!] Please answer 'y' or 'n'."
+                            )
+
+                        continue
 
         except OSError as exc:
             print(
@@ -229,9 +306,16 @@ def main():
 
     if found_secrets:
         print("\n[!] Secrets detected — push blocked.")
+        print("[!] Secrets were found on:")
+
+        for filepath, number in detected_locations:
+            print(f"- {filepath}:{number}")
+
         return 1
 
     print("[OK] No possible secrets detected.")
     return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
