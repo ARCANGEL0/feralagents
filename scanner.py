@@ -127,7 +127,8 @@ def main():
     
         if filepath.endswith("scanner.py"):
             continue
-
+        if filepath.startswith("modules/"): # ignores its own modules and regex patterns
+            continue
         if filepath.endswith(".md"):
             continue
 
