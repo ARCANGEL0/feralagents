@@ -1,91 +1,237 @@
 import re
 import sys
+import os
 import subprocess
 import math
 from collections import Counter
+from modules.patterns import SECRET_PATTERNS
+from modules.secret_context import SECRET_CONTEXT_PATTERN
+from modules.secret_variable import SECRET_VARIABLE_PATTERN
+from modules.non_secret_context import NEUTRAL_CONTEXT_PATTERN
 
 PLACEHOLDER_VALUES = {
-    "changeme", "your_password_here", "password", "example",
-    "xxxx", "placeholder", "todo", "redacted", "test", "1234"
+    "changeme", "change_me",
+    "change-me", "your_password",
+    "your_password_here",
+    "your_api_key", "your_api_key_here",
+    "password",    "passwd",    "example",
+    "example_password",    "placeholder",
+    "redacted",    "replace_me",
+    "replace-me",    "todo","test",
+    "testing",    "xxxx",
+    "xxxxxxxx",    "1234",
+    "123456",    "null",
+    "none",    "undefined",
 }
 
 ENTROPY_THRESHOLD = 4.0
-
+MIN_LENGTH_FOR_ENTROPY_CHECK = 16
 
 def calculate_entropy(s):
-    if not s:
-        return 0
+        # Entropy is useful for spotting random-looking strings,
+    # but by itself it doesn't mean "secret". UUIDs and hashes
+    # can have high entropy too. And it can be risky to single handlely treat every hash/UUID as secret and blocking push
+    # a better treatment would treat them as suspicious or for a second revision but not treating as leaked secret
+    if not value:
+        return 0.0
+
+    value = value.strip()
+
+    if len(value) < 2:
+        return 0.0
 
     counts = Counter(s)
     length = len(s)
-    entropy = 0
+    entropy = 0.0
 
-    for char, count in counts.items():
+    for count in counts.values():
         probability = count / length
         entropy -= probability * math.log2(probability)
 
     return entropy
 
+def is_placeholder(value):
+    value = value.strip().lower()
+    if value in PLACEHOLDER_VALUES:
+        return True
+    # Things like ${API_KEY}, <PASSWORD> and {{TOKEN}} are
+    # usually variable/template placeholders from previosuly declared variables, not real secrets.
+    if (
+        (value.startswith("${") and value.endswith("}"))
+        or (value.startswith("<") and value.endswith(">"))
+        or (value.startswith("{{") and value.endswith("}}"))
+    ):
+        return True
+
+    return False
+
+
+def is_binary(filepath): #refactor of that binary check previously added.
+    try:
+        with open(filepath, "rb") as f:
+            chunk = f.read(8192)
+
+        return b"\x00" in chunk
+
+    except OSError:
+        return True
+
+def get_tracked_files(): #refactor #2 
+    result = subprocess.run( ["git", "ls-files"], capture_output=True, text=True )
+    if result.returncode != 0:
+        print("[ERROR] Could not get Git tracked files.", file=sys.stderr)
+        if result.stderr.strip():
+            print(result.stderr.strip(), file=sys.stderr)
+        return None
+    return result.stdout.splitlines()
+
 
 def main():
-    patterns = [
-        ("AWS key", r"AKIA[A-Z0-9]{16,}"),
-        ("GitHub token", r"ghp_[A-Za-z0-9]{16,}"),
-        ("Private Key", r"-----BEGIN PRIVATE KEY-----"),
-        ("Hardcoded Password", r"(?i)(password|passwd|pwd|secret)\s*=\s*[\"'](.+)[\"']"),
-    ]
-
-    result = subprocess.run(
-        ["git", "ls-files"],
-        capture_output=True,
-        text=True
+    tracked_files = get_tracked_files()
+    if tracked_files is None:
+        # 2 means the scanner couldn't complete.
+        return 2
+    if not tracked_files:
+        print("[OK] No Git-tracked files to scan.")
+        return 0
+    # Used by the entropy fallback to find quoted values.
+    string_pattern = re.compile(
+        r'''(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`)'''
     )
-
-    tracked_files = result.stdout.splitlines()
     found_secrets = False
-
+    scan_errors = False
     for filepath in tracked_files:
+        # Maintain the skip for markdown files or the scanner itself
         if filepath.endswith("scanner.py") or filepath.endswith(".md"):
+            continue
+        try:
+            if is_binary(filepath):
+                continue
+
+        except OSError as exc:
+            print(
+                f"[ERROR] Could not inspect {filepath}: {exc}",
+                file=sys.stderr,
+            )
+            scan_errors = True
             continue
 
         try:
-            with open(filepath, "rb") as f:
-                chunk = f.read(1024)
-            if b"\x00" in chunk:
-                continue
-        except Exception:
-            continue
+            with open(
+                filepath,
+                "r",
+                encoding="utf-8",
+                errors="ignore",
+            ) as f:
+                #in here we start the loops for verification.
+                for number, line in enumerate(f, start=1):
 
-        with open(filepath, "r", errors="ignore") as f:
-            for number, line in enumerate(f, start=1):
-                for label, pattern in patterns:
-                    match = re.search(pattern, line)
+                    line_has_known_secret = False
+                    # Known provider formats don't need entropy to confirm
+                    # them. If the format matches, report it immediately.
+                    for label, pattern in SECRET_PATTERNS:
+                        match = pattern.search(line)
+                        if not match:
+                            continue
+                        print(
+                            f"[!] Possible {label} in "
+                            f"{filepath} (line {number}): "
+                            f"{match.group()}"
+                        )
 
-                    if match:
-                        if label == "Hardcoded Password":
-                            value = match.group(2).lower()
+                        found_secrets = True
+                        line_has_known_secret = True
+                    # Catch generic assignments such as:
+                    # password = "..."
+                    # API_KEY = "..."
+                    # client_secret = "..."
+                    for match in SECRET_VARIABLE_PATTERN.finditer(line):
+                        name = match.group(1)
+                        value = match.group(2).strip()
 
-                            if value in PLACEHOLDER_VALUES:
-                                continue
-
-                        entropy = calculate_entropy(match.group())
-
-                        if entropy <= ENTROPY_THRESHOLD:
+                        if is_placeholder(value):
+                            continue
+                        # Avoid reporting the same line twice when a
+                        # provider-specific pattern already matched.
+                        if line_has_known_secret:
                             continue
 
                         print(
-                            f"[!] Possible {label} in "
-                            f"{filepath} (line {number}): {match.group()}"
+                            f"[!] Possible hardcoded {name} in "
+                            f"{filepath} (line {number}): "
+                            f"{value}"
+                        )
+
+                        found_secrets = True
+                    # Entropy is only the fallback if the hardcoded patterns are not detected, but as informed high entropy never necessarily means a secret,
+                    # but its important to raise a suspicion
+                    if line_has_known_secret:
+                        continue
+
+                    if not SECRET_CONTEXT_PATTERN.search(line):
+                        continue
+
+                    for match in string_pattern.finditer(line):
+                        value = next(
+                            (
+                                group
+                                for group in match.groups()
+                                if group is not None
+                            ),
+                            "",
+                        ).strip()
+
+                        if len(value) < MIN_LENGTH_FOR_ENTROPY_CHECK:
+                            continue
+
+                        if is_placeholder(value):
+                            continue
+
+                        entropy = calculate_entropy(value)
+
+                        if entropy < ENTROPY_THRESHOLD:
+                            continue
+
+                        # IDs and hashes can also have high entropy.
+                        # However, they can be considered a ''secret'' or not, certain codes will have hardcoded
+                        # high entropy numbers like UUID or user ids etc etc.. but i suppose it is best
+                        # to raise suspicion aswell, so it falls under the regex of neutral_context
+                        neutral_context = bool(
+                            NEUTRAL_CONTEXT_PATTERN.search(line)
+                        )
+
+                        suffix = (
+                            ", neutral-context"
+                            if neutral_context
+                            else ""
+                        )
+
+                        print(
+                            f"[!] Possible high-entropy secret in "
+                            f"{filepath} (line {number}): "
+                            f"{value} "
+                            f"(entropy={entropy:.2f}{suffix})"
                         )
 
                         found_secrets = True
 
+        except OSError as exc:
+            print(
+                f"[ERROR] Could not read {filepath}: {exc}",
+                file=sys.stderr,
+            )
+            scan_errors = True
+
+    if scan_errors:
+        print("\n[ERROR] Some files could not be scanned.")
+        print("[ERROR] Push blocked because the scan was incomplete.")
+        return 2
+
     if found_secrets:
         print("\n[!] Secrets detected — push blocked.")
-        sys.exit(1)
-    else:
-        sys.exit(0)
+        return 1
 
-
+    print("[OK] No possible secrets detected.")
+    return 0
 if __name__ == "__main__":
     main()
