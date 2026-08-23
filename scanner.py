@@ -1,6 +1,5 @@
 import re
 import sys
-import os
 import subprocess
 import math
 from collections import Counter
@@ -81,7 +80,7 @@ def is_binary(filepath): #refactor of that binary check previously added.
         return True
 
 
-def whitelist(filepath, line_number, value, entropy):
+def show_whitelist_prompt(filepath, line_number, value, entropy):
     print()
     print(
         f"[possible secret found] "
@@ -184,8 +183,10 @@ def main():
                     # but its important to raise a suspicion tho
                     if line_has_known_secret:
                         continue
-
-                    if not SECRET_CONTEXT_PATTERN.search(line):
+                    has_secret_context = SECRET_CONTEXT_PATTERN.search(line)
+                    has_neutral_context = NEUTRAL_CONTEXT_PATTERN.search(line)
+                    
+                    if not has_secret_context and not has_neutral_context:
                         continue
 
                     for match in string_pattern.finditer(line):
@@ -218,18 +219,10 @@ def main():
                         # IDs and hashes can also have high entropy.
                         # However, they can be considered a ''secret'' or not, certain codes will have hardcoded
                         # high entropy numbers like UUID or user ids etc etc.. but i suppose it is best
-                        # to raise suspicion aswell, so it falls under the regex of neutral_context
-                        neutral_context = bool(
-                            NEUTRAL_CONTEXT_PATTERN.search(line)
-                        )
+                        # to raise suspicion aswell, 
 
-                        suffix = (
-                            ", neutral-context"
-                            if neutral_context
-                            else ""
-                        )
-
-                        whitelist(
+                        
+                        show_whitelist_prompt(
                             filepath,
                             number,
                             value,
