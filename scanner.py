@@ -105,6 +105,29 @@ def get_tracked_files(): #refactor #2
         return None
     return result.stdout.splitlines()
 
+def ask_user(prompt):
+    try:
+        if sys.stdin.isatty():
+            stream = sys.stdin
+            owned = False
+        else:
+            stream = open("/dev/tty", "r")
+            owned = True
+    except OSError as exc:
+        print("[!] No terminal input available, automatically blocking push", file=sys.stderr)
+        return None
+    try:
+        sys.stderr.write(prompt)
+        sys.stderr.flush()
+        answer = stream.readline()
+    finally:
+        if owned:
+            stream.close()
+    if not answer:
+        print("[!] No answer received. rejecting push!", file=sys.stderr)
+        return None
+    return answer.strip().lower()
+
 
 def main():
     tracked_files = get_tracked_files()
@@ -241,14 +264,13 @@ def main():
                         )
                     
                         while True:
-                            try:
-                                answer = input("> ").strip().lower()
-                            except (EOFError, KeyboardInterrupt):
+                            answer = ask_user("> ")
+                            if answer is None:
                                 print()
                                 print("[!] No approval received.")
                                 print("[!] Push blocked.")
                                 return 1
-                    
+                        
                             if answer in ("y", "yes"):
                                 whitelist_value(
                                     value,
@@ -305,9 +327,9 @@ def main():
                         )
 
                         while True:
-                            try:
-                                answer = input("> ").strip().lower()
-                            except (EOFError, KeyboardInterrupt):
+                            answer = ask_user("> ")
+                            
+                            if answer is None:
                                 print()
                                 print(
                                     "[!] No approval received."
@@ -316,7 +338,7 @@ def main():
                                     "[!] Push blocked."
                                 )
                                 return 1
-
+                        
                             if answer in ("y", "yes"):
                                 whitelist_value(
                                     value,
